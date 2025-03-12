@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -8,12 +9,12 @@ namespace TelegramBot.Server
 {
     public class User
     {
-        public int Id { get; set; }
+        [Key]
         public long ChatId { get; set; }
+        public string Username { get; set; }
         public string FirstName { get; set; }
         public string LastName { get; set; }
-        public string Bio { get; set; }
-        public string Username { get; set; }
-        public DateTime CreatedAt { get; set; }
+        public string SelectedRegion { get; set; }
+        public DateTime LastInteraction { get; set; }
     }
 }

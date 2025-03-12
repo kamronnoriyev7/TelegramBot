@@ -6,10 +6,12 @@ using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
+using TelegramBot.Server;
+using User = TelegramBot.Server.User;
 
 class Program
 {
-    private static readonly string Token = "7891981406:AAHbceeNo73Gb62LFnyd92FABAfTQ36T7Nc";
+    private static readonly string Token = "7891981406:AAECh_oS5CJzR_bPlN3HfJLoVOw62eDonXc";
     private static TelegramBotClient botClient;
 
     // Viloyatlar ro'yxati
@@ -491,84 +493,83 @@ class Program
             var chatId = update.Message.Chat.Id;
             var messageText = update.Message.Text;
 
-            if (messageText == "/start")
+            using (var db = new BotDbContext())
             {
-                // Viloyat tugmalarini yaratish
-                var regionButtons = new List<KeyboardButton[]>();
-                foreach (var region in Regions)
+                var user = db.Users.FirstOrDefault(u => u.ChatId == chatId);
+
+                if (messageText == "/start")
                 {
-                    regionButtons.Add(new[] { new KeyboardButton(region) });
-                }
-
-                // Tugmalarni yuborish
-                await botClient.SendTextMessageAsync(
-                    chatId: chatId,
-                    text: "Iltimos, viloyatingizni tanlang:",
-                    replyMarkup: new ReplyKeyboardMarkup(regionButtons) { ResizeKeyboard = true }
-                );
-            }
-            else if (Regions.Contains(messageText))
-            {
-                // Foydalanuvchi viloyatni tanladi, uni saqlash
-                UserSelectedRegion[chatId] = messageText;
-
-                // Kunlarni tanlash tugmalarini yuborish
-                var startDate = new DateTime(2025, 3, 1); // 1-mart
-                var endDate = new DateTime(2025, 3, 30); // 30-mart
-                var dateButtons = new List<KeyboardButton[]>();
-
-                for (var date = startDate; date <= endDate; date = date.AddDays(1))
-                {
-                    dateButtons.Add(new[] { new KeyboardButton(date.ToString("yyyy-MM-dd")) });
-                }
-
-                // Tugmalarni yuborish
-                await botClient.SendTextMessageAsync(
-                    chatId: chatId,
-                    text: "Iltimos, kunni tanlang:",
-                    replyMarkup: new ReplyKeyboardMarkup(dateButtons) { ResizeKeyboard = true }
-                );
-            }
-            else if (DateTime.TryParseExact(messageText, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var selectedDate))
-            {
-                // Foydalanuvchi tanlagan viloyatni olish
-                if (UserSelectedRegion.TryGetValue(chatId, out var selectedRegion))
-                {
-                    // Faqat 1-martdan 30-martgacha bo'lgan sanalarni qabul qilish
-                    var startDate = new DateTime(2025, 3, 1);
-                    var endDate = new DateTime(2025, 3, 30);
-
-                    if (selectedDate >= startDate && selectedDate <= endDate)
+                    if (user == null || string.IsNullOrEmpty(user.SelectedRegion) || user.SelectedRegion == "Default")
                     {
-                        // Saharlik va iftorlik vaqtlari va duolarini olish
-                        if (RegionPrayerTimes.TryGetValue(selectedRegion, out var times) && times.TryGetValue(selectedDate, out var prayerTimes))
-                        {
-                            var (saharlik, iftorlik) = prayerTimes;
-                            var (saharlikDuosi, iftorlikDuosi) = GetPrayerDuo();
+                        // Foydalanuvchi yangi yoki viloyati tanlanmagan bo‘lsa, viloyat so‘rash
+                        var regionButtons = Regions.Select(region => new[] { new KeyboardButton(region) }).ToList();
 
-                            // Javobni yuborish
-                            await botClient.SendTextMessageAsync(
-                                chatId: chatId,
-                                text: $"📅 Sana: {selectedDate:yyyy-MM-dd}\n" +
-                                      $"🌅 Saharlik: {saharlik}\n" +
-                                      $"📖 Saharlik duosi:\n{saharlikDuosi}\n\n" +
-                                      $"🌇 Iftorlik: {iftorlik}\n" +
-                                      $"📖 Iftorlik duosi:\n{iftorlikDuosi}"
-                            );
-                        }
-                        else
+                        await botClient.SendTextMessageAsync(
+                            chatId: chatId,
+                            text: "Iltimos, viloyatingizni tanlang:",
+                            replyMarkup: new ReplyKeyboardMarkup(regionButtons) { ResizeKeyboard = true }
+                        );
+                    }
+                    else
+                    {
+                        // Foydalanuvchi allaqachon ro‘yxatdan o‘tgan va viloyati mavjud bo‘lsa, bevosita kun tanlash
+                        await SendDateSelection(botClient, chatId);
+                    }
+                }
+                else if (messageText == "/change_region")
+                {
+                    // Foydalanuvchining viloyatini yangilash
+                    if (user != null)
+                    {
+                        user.SelectedRegion = "Default"; // Tanlanmagan deb belgilash
+                        await db.SaveChangesAsync();
+                    }
+
+                    var regionButtons = Regions.Select(region => new[] { new KeyboardButton(region) }).ToList();
+
+                    await botClient.SendTextMessageAsync(
+                        chatId: chatId,
+                        text: "Iltimos, viloyatingizni qayta tanlang:",
+                        replyMarkup: new ReplyKeyboardMarkup(regionButtons) { ResizeKeyboard = true }
+                    );
+                }
+
+                else if (Regions.Contains(messageText))
+                {
+                    // Foydalanuvchi viloyat tanlagan bo‘lsa
+                    if (user == null)
+                    {
+                        user = new User
                         {
-                            await botClient.SendTextMessageAsync(
-                                chatId: chatId,
-                                text: "Bu sana uchun ma'lumot topilmadi."
-                            );
-                        }
+                            ChatId = chatId,
+                            FirstName = update.Message.Chat.FirstName ?? "NoFirstName",
+                            LastName = update.Message.Chat.LastName ?? "NoLastName",
+                            Username = update.Message.Chat.Username ?? "NoUsername",
+                            SelectedRegion = messageText,
+                            LastInteraction = DateTime.Now
+                        };
+                        db.Users.Add(user);
+                    }
+                    else
+                    {
+                        user.SelectedRegion = messageText;
+                        user.LastInteraction = DateTime.Now;
+                    }
+
+                    await db.SaveChangesAsync();
+                    await SendDateSelection(botClient, chatId);
+                }
+                else if (DateTime.TryParseExact(messageText, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var selectedDate))
+                {
+                    if (user != null && !string.IsNullOrEmpty(user.SelectedRegion))
+                    {
+                        await SendPrayerTimes(botClient, chatId, user.SelectedRegion, selectedDate);
                     }
                     else
                     {
                         await botClient.SendTextMessageAsync(
                             chatId: chatId,
-                            text: "Noto'g'ri sana. Iltimos, 1-martdan 30-martgacha bo'lgan sanalardan tanlang."
+                            text: "Iltimos, avval viloyatingizni tanlang."
                         );
                     }
                 }
@@ -576,19 +577,71 @@ class Program
                 {
                     await botClient.SendTextMessageAsync(
                         chatId: chatId,
-                        text: "Iltimos, avval viloyatingizni tanlang."
+                        text: "Noto'g'ri format. Iltimos, qaytadan urinib ko'ring."
                     );
                 }
+            }
+        }
+    }
+
+    // Kunlarni tanlashni yuborish funksiyasi
+    private static async Task SendDateSelection(ITelegramBotClient botClient, long chatId)
+    {
+        var startDate = new DateTime(2025, 3, 1);
+        var endDate = new DateTime(2025, 3, 30);
+        var dateButtons = new List<KeyboardButton[]>();
+
+        for (var date = startDate; date <= endDate; date = date.AddDays(1))
+        {
+            dateButtons.Add(new[] { new KeyboardButton(date.ToString("yyyy-MM-dd")) });
+        }
+
+        await botClient.SendTextMessageAsync(
+            chatId: chatId,
+            text: "Iltimos, kunni tanlang:",
+            replyMarkup: new ReplyKeyboardMarkup(dateButtons) { ResizeKeyboard = true }
+        );
+    }
+
+    // Duolar va namoz vaqtlarini yuborish funksiyasi
+    private static async Task SendPrayerTimes(ITelegramBotClient botClient, long chatId, string selectedRegion, DateTime selectedDate)
+    {
+        var startDate = new DateTime(2025, 3, 1);
+        var endDate = new DateTime(2025, 3, 30);
+
+        if (selectedDate >= startDate && selectedDate <= endDate)
+        {
+            if (RegionPrayerTimes.TryGetValue(selectedRegion, out var times) && times.TryGetValue(selectedDate, out var prayerTimes))
+            {
+                var (saharlik, iftorlik) = prayerTimes;
+                var (saharlikDuosi, iftorlikDuosi) = GetPrayerDuo();
+
+                await botClient.SendTextMessageAsync(
+                    chatId: chatId,
+                    text: $"📅 Sana: {selectedDate:yyyy-MM-dd}\n" +
+                          $"🌅 Saharlik: {saharlik}\n" +
+                          $"📖 Saharlik duosi:\n{saharlikDuosi}\n\n" +
+                          $"🌇 Iftorlik: {iftorlik}\n" +
+                          $"📖 Iftorlik duosi:\n{iftorlikDuosi}"
+                );
             }
             else
             {
                 await botClient.SendTextMessageAsync(
                     chatId: chatId,
-                    text: "Noto'g'ri format. Iltimos, qaytadan urinib ko'ring."
+                    text: "Bu sana uchun ma'lumot topilmadi."
                 );
             }
         }
+        else
+        {
+            await botClient.SendTextMessageAsync(
+                chatId: chatId,
+                text: "Noto'g'ri sana. Iltimos, 1-martdan 30-martgacha bo'lgan sanalardan tanlang."
+            );
+        }
     }
+
 
     private static Task ErrorHandler(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
     {
@@ -600,7 +653,7 @@ class Program
     private static (string SaharlikDuosi, string IftorlikDuosi) GetPrayerDuo()
     {
         string saharlikDuosi =
-            "Навайту ан асума совма шахри рамазона минал фажри илал маг‘риби, холисан лиллахи та'ала. Аллоҳу акбар" 
+            "Навайту ан асума совма шахри рамазона минал фажри илал маг‘риби, холисан лиллахи та'ала. Аллоҳу акбар"
             ;
 
         string iftorlikDuosi =
@@ -610,3 +663,4 @@ class Program
         return (saharlikDuosi, iftorlikDuosi);
     }
 }
+
